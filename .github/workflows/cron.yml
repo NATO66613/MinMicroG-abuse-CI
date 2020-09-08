@@ -1,0 +1,21 @@
+# Simple, no-dependency config to execute a file
+
+name: cron
+
+on:
+  issues:
+    types: [ opened, reopened ]
+  schedule:
+    - cron: '* * * * *'
+  workflow_dispatch:
+
+jobs:
+  cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger workflow
+        env:
+          ACTIONS_TOKEN: ${{ github.token }}
+        run: |
+          auth="Authorization: token $ACTIONS_TOKEN"
+          curl --data '{ "ref": "hub" }' -H "$auth" "https://api.github.com/repos/FriendlyNeighborhoodShane/MinMicroG-abuse-CI/actions/workflows/run.yml/dispatches"
