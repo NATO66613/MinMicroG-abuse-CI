@@ -1,0 +1,18 @@
+# Simple, no-dependency config to execute a file
+
+name: Run
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Run the script
+        env:
+          ACTIONS_TOKEN: ${{ github.token }}
+        run: |
+          git clone "https://github.com/${{ github.repository }}" .
+          ./run

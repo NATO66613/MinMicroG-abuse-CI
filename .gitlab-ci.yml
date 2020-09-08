@@ -1,0 +1,5 @@
+# Simple, no-dependency config to execute a file
+
+run:
+  script: |
+    ./run
