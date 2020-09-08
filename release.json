@@ -1,0 +1,6 @@
+{
+  "tag_name": "@TAG@",
+  "target_commitish": "hub",
+  "name": "@NAME@",
+  "body": "@BODY@"
+}
