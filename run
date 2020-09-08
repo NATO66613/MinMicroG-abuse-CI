@@ -1,0 +1,153 @@
+#!/bin/sh
+# Build and upload MinMicroG packages
+
+# Find package manager
+if false; then
+  pmcmd() {
+    return 1;
+  }
+elif [ "$(which apt)" ] && [ "$(which sudo)" ]; then
+  sudo apt-get update;
+  pmcmd() {
+    sudo apt-get install -y "$1";
+  }
+elif [ "$(which apt)" ]; then
+  apt-get update;
+  pmcmd() {
+    apt-get install -y "$1";
+  }
+else
+  echo " ";
+  echo "!!! ERROR: Could not figure out package manager";
+fi;
+
+# Dependency check
+for bin in curl git jq unzip zip; do
+  [ "$(which "$bin")" ] || pmcmd "$bin";
+  [ "$(which "$bin")" ] || {
+    echo " ";
+    echo "!!! FATAL: Could not install dependency: $bin !!!";
+    exit 1;
+  }
+done;
+for bin in aapt jarsigner openssl; do
+  [ "$(which "$bin")" ] || pmcmd "$bin";
+  [ "$(which "$bin")" ] || {
+    echo " ";
+    echo "!!! ERROR: Could not install optional dependency: $bin !!!";
+  }
+done;
+
+# Variables
+tag="$(date -u +"%Y.%m.%d")";
+name="$(date -u +"%d %b %Y")";
+date="$(date -u +"%Y%m%d%H%M%S")";
+
+# Clone time
+echo " ";
+echo "Cloning MinMicroG...";
+git clone "https://github.com/FriendlyNeighborhoodShane/MinMicroG";
+git clone "https://github.com/FriendlyNeighborhoodShane/MinMicroG-abuse-CI" -b "current" "./MinMicroG-resdl";
+
+# Intro
+mkdir "./MinMicroG/releases";
+echo " ";
+{
+  echo " --- MinMicroG autobuild logs --- ";
+  echo " ";
+  echo "Date: $name $date";
+  echo "System: $(uname -a)";
+} | tee "./MinMicroG/releases/build-$date.log";
+
+# Setup stuff
+echo " ";
+echo "Setting up build...";
+sed -i  -e "s|^ver=.*|ver=\"UPDATELY\"|g" -e "s|^verc=.*|verc=\"9999\"|g" -e "s|^date=.*|date=\"$name\"|g" -- "./MinMicroG/conf"/defconf-*.txt;
+rm -rf "./MinMicroG-resdl/system"/*;
+ln -frs "./MinMicroG-resdl/system" "./MinMicroG-resdl/util" "./MinMicroG/resdl/";
+cert="$(curl -s "https://api.github.com/repos/FriendlyNeighborhoodShane/MinMicroG_releases/releases" | jq -r ".[].assets[].browser_download_url" | grep "certs.tar.gz$" | head -n1)";
+[ "$cert" ] && {
+  {
+    echo " ";
+    echo "Cert archive found at $cert"
+  } | tee -a "./MinMicroG/releases/build-$date.log";
+  (
+    cd "./MinMicroG-resdl/util/certs";
+    rm -rf ./*;
+    curl -L "$cert" | tar xz;
+  )
+}
+
+# Build time
+echo " ";
+echo "Updating and building MinMicroG...";
+(
+  echo " ";
+  cd "./MinMicroG";
+  ./update.sh;
+  ./build.sh all;
+) 2>&1 | tee -a "./MinMicroG/releases/build-$date.log";
+
+# Create diff
+echo " ";
+echo "Generating update diff...";
+echo " ";
+(
+  cd "./MinMicroG-resdl";
+  git add -A;
+  echo "Update diff from last CI build:";
+  echo " ";
+  git diff --staged -C -C --stat;
+  echo " ";
+  git diff --staged -C -C;
+  echo " ";
+  echo "Update diff from last official build:";
+  echo " ";
+  git diff --staged HEAD^ -C -C --stat;
+  echo " ";
+  git diff --staged HEAD^ -C -C;
+) | tee "./MinMicroG/releases/diff-$date.txt";
+
+# Exit if not running on Github CI
+[ "$ACTIONS_TOKEN" ] || exit 0;
+
+# Release variables
+ghapi="https://api.github.com/repos/$GITHUB_REPOSITORY/releases";
+ghupl="https://uploads.github.com/repos/$GITHUB_REPOSITORY/releases";
+id="$(curl -s -H "Authorization: token $ACTIONS_TOKEN" "$ghapi/tags/$tag" | jq -r '.id')";
+
+# Big if true
+if [ "$id" != "null" ]; then
+  echo " ";
+  echo "Daily release $tag exists !!!";
+  exit 0;
+elif (cd "./MinMicroG-resdl" && [ "$(git diff --staged -- system)" ]); then
+  echo " ";
+  echo "Committing updates to resdl tracker...";
+  (
+    cd "./MinMicroG-resdl";
+    git -c user.name="github-actions" -c user.email="actions@github.com" commit --amend -m "Current bins";
+    git push -f "https://$GITHUB_ACTOR:$ACTIONS_TOKEN@github.com/$GITHUB_REPOSITORY" "+HEAD:current";
+  )
+elif [ "$GITHUB_ACTOR" = "MMGReleaseBot" ]; then
+  echo " ";
+  echo "Nothing to update !!!";
+  exit 0;
+fi;
+
+# Release time
+echo " ";
+echo "Creating release at $tag...";
+sed -i "s|@TAG@|$tag|g" "./release.json";
+sed -i "s|@NAME@|$name|g" "./release.json";
+sed -i "s|@BODY@|Automatic release triggered by $GITHUB_EVENT_NAME. The masses deserve to be lazy!|g" "./release.json";
+curl --data @"release.json" -H "Authorization: token $ACTIONS_TOKEN" -H "Content-Type: application/json" "$ghapi";
+id="$(curl -s -H "Authorization: token $ACTIONS_TOKEN" "$ghapi/tags/$tag" | jq -r '.id')";
+
+# Upload time
+echo " ";
+echo "Uploading files...";
+for file in "./MinMicroG/releases"/*; do
+    ghass="$ghupl/$id/assets?name=$(basename "$file")";
+    curl --data-binary @"$file" -H "Authorization: token $ACTIONS_TOKEN" -H "Content-Type: application/octet-stream" "$ghass" -o /dev/null;
+done;
